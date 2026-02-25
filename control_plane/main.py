@@ -4,6 +4,7 @@ from .router import Router
 from .database import init_db, get_metrics
 from .auth import authorize
 from .status import model_status
+from .sla import sla_controller
 
 app = FastAPI()
 router = Router()
@@ -42,6 +43,11 @@ def metrics(x_api_key: str = Header(...)):
 def status(x_api_key: str = Header(...)):
     authorize(x_api_key, "azure")
     return model_status()
+
+@app.get("/sla")
+def sla(x_api_key: str = Header(...)):
+    authorize(x_api_key, "azure")
+    return sla_controller.evaluate()
 
 @app.get("/health")
 def health():

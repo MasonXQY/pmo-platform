@@ -1,21 +1,65 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, Request
 from .router import Router
 from .observability import observability
+from .models import StandardResponse
+import uuid
 
 app = FastAPI()
 router = Router()
 
-class Request(BaseModel):
-    prompt: str
+@app.post("/auto", response_model=StandardResponse)
+async def auto(request: Request):
+    body = await request.json()
+    prompt = body.get("prompt")
 
-@app.post("/auto")
-async def auto(req: Request):
-    return await router.auto(req.prompt)
+    request_id = str(uuid.uuid4())
 
-@app.post("/ensemble")
-async def ensemble(req: Request):
-    return await router.ensemble(req.prompt)
+    try:
+        result = await router.auto(prompt)
+        return StandardResponse(
+            request_id=request_id,
+            model=result.get("model"),
+            latency_ms=result.get("latency_ms"),
+            cost_estimate=result.get("estimated_cost"),
+            output=result.get("output"),
+            error=None
+        )
+    except Exception as e:
+        return StandardResponse(
+            request_id=request_id,
+            model=None,
+            latency_ms=None,
+            cost_estimate=None,
+            output=None,
+            error=str(e)
+        )
+
+@app.post("/ensemble", response_model=StandardResponse)
+async def ensemble(request: Request):
+    body = await request.json()
+    prompt = body.get("prompt")
+
+    request_id = str(uuid.uuid4())
+
+    try:
+        result = await router.ensemble(prompt)
+        return StandardResponse(
+            request_id=request_id,
+            model=result.get("selected_model"),
+            latency_ms=None,
+            cost_estimate=None,
+            output=result.get("response"),
+            error=None
+        )
+    except Exception as e:
+        return StandardResponse(
+            request_id=request_id,
+            model=None,
+            latency_ms=None,
+            cost_estimate=None,
+            output=None,
+            error=str(e)
+        )
 
 @app.get("/metrics")
 def metrics():

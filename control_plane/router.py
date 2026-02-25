@@ -4,6 +4,7 @@ from .observability import observability
 from .cost_model import estimate_cost
 from .database import record_request
 from .judge import Judge
+from .cache import get_cached, set_cache, init_cache
 
 BUDGET_LIMIT = 0.05
 
@@ -15,6 +16,7 @@ class Router:
         self.sonnet = ClaudeAgent("claude-sonnet-4-6")
         self.azure = AzureGPTAgent()
         self.judge = Judge()
+        init_cache()
 
     def classify(self, prompt):
         code_keywords = [
@@ -40,6 +42,17 @@ class Router:
             return "kimi"
 
     async def single_route(self, model, prompt):
+        cached = get_cached(model, prompt)
+        if cached:
+            return {
+                "model": model,
+                "latency_ms": 0,
+                "estimated_cost": 0,
+                "tokens": len(cached.split()),
+                "output": cached,
+                "cache": True
+            }
+
         request_id, start = observability.start()
 
         if model == "kimi":
@@ -61,13 +74,15 @@ class Router:
             raise Exception(f"Cost limit exceeded: {cost}")
 
         record_request(model, latency, tokens, cost)
+        set_cache(model, prompt, result)
 
         return {
             "model": model,
             "latency_ms": latency,
             "estimated_cost": cost,
             "tokens": tokens,
-            "output": result
+            "output": result,
+            "cache": False
         }
 
     async def ensemble(self, prompt):

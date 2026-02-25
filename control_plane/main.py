@@ -11,15 +11,19 @@ class Request(BaseModel):
 
 @app.post("/auto")
 async def auto(req: Request):
-    return await router.call_model("azure", req.prompt)
+    return await router.auto(req.prompt)
 
 @app.post("/model/{model_name}")
 async def call_specific(model_name: str, req: Request):
-    return await router.call_model(model_name, req.prompt)
+    return await router.single_route(model_name, req.prompt)
 
-@app.post("/test-all")
-async def test_all(req: Request):
-    return await router.test_all(req.prompt)
+@app.post("/ensemble")
+async def ensemble(req: Request):
+    return await router.ensemble(req.prompt)
+
+@app.post("/code")
+async def code(req: Request):
+    return await router.single_route("opus", req.prompt)
 
 @app.get("/metrics")
 def metrics():

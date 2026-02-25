@@ -7,7 +7,7 @@ from .database import record_request
 from .judge import Judge
 from .cache import get_cached, set_cache, init_cache
 from .adaptive import AdaptiveOptimizer
-from .logging import log_event
+from .logging import log_event, hash_prompt
 from .circuit_breaker import breaker
 
 BUDGET_LIMIT = 0.05
@@ -51,6 +51,10 @@ class Router:
 
     async def _call_model(self, model, prompt):
         if breaker.is_open(model):
+            log_event({
+                "event": "circuit_block",
+                "model": model
+            })
             raise Exception(f"Circuit open for {model}")
 
         try:
@@ -70,12 +74,24 @@ class Router:
 
         except Exception as e:
             breaker.record_failure(model)
+            log_event({
+                "event": "model_failure",
+                "model": model,
+                "error": str(e)
+            })
             raise e
 
     async def single_route(self, model, prompt):
         async with semaphore:
+            prompt_hash = hash_prompt(prompt)
+
             cached = get_cached(model, prompt)
             if cached:
+                log_event({
+                    "event": "cache_hit",
+                    "model": model,
+                    "prompt_hash": prompt_hash
+                })
                 return {
                     "model": model,
                     "latency_ms": 0,
@@ -96,13 +112,20 @@ class Router:
             cost = estimate_cost(model, tokens)
 
             if cost > BUDGET_LIMIT:
+                log_event({
+                    "event": "cost_exceeded",
+                    "model": model,
+                    "cost": cost
+                })
                 raise Exception(f"Cost limit exceeded: {cost}")
 
             record_request(model, latency, tokens, cost)
             set_cache(model, prompt, output)
 
             log_event({
+                "event": "request_complete",
                 "model": model,
+                "prompt_hash": prompt_hash,
                 "latency_ms": latency,
                 "tokens": tokens,
                 "cost": cost
@@ -119,6 +142,8 @@ class Router:
 
     async def ensemble(self, prompt):
         async with semaphore:
+            prompt_hash = hash_prompt(prompt)
+
             tasks = {
                 "kimi": asyncio.create_task(self._call_model("kimi", prompt)),
                 "opus": asyncio.create_task(self._call_model("opus", prompt)),
@@ -137,9 +162,10 @@ class Router:
             best_model, confidence = await self.judge.evaluate(prompt, results)
 
             log_event({
-                "ensemble": True,
+                "event": "ensemble_decision",
                 "selected_model": best_model,
-                "confidence": confidence
+                "confidence": confidence,
+                "prompt_hash": prompt_hash
             })
 
             return {

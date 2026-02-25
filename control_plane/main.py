@@ -1,65 +1,25 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
+from pydantic import BaseModel
 from .router import Router
 from .observability import observability
-from .models import StandardResponse
-import uuid
 
 app = FastAPI()
 router = Router()
 
-@app.post("/auto", response_model=StandardResponse)
-async def auto(request: Request):
-    body = await request.json()
-    prompt = body.get("prompt")
+class Request(BaseModel):
+    prompt: str
 
-    request_id = str(uuid.uuid4())
+@app.post("/auto")
+async def auto(req: Request):
+    return await router.call_model("azure", req.prompt)
 
-    try:
-        result = await router.auto(prompt)
-        return StandardResponse(
-            request_id=request_id,
-            model=result.get("model"),
-            latency_ms=result.get("latency_ms"),
-            cost_estimate=result.get("estimated_cost"),
-            output=result.get("output"),
-            error=None
-        )
-    except Exception as e:
-        return StandardResponse(
-            request_id=request_id,
-            model=None,
-            latency_ms=None,
-            cost_estimate=None,
-            output=None,
-            error=str(e)
-        )
+@app.post("/model/{model_name}")
+async def call_specific(model_name: str, req: Request):
+    return await router.call_model(model_name, req.prompt)
 
-@app.post("/ensemble", response_model=StandardResponse)
-async def ensemble(request: Request):
-    body = await request.json()
-    prompt = body.get("prompt")
-
-    request_id = str(uuid.uuid4())
-
-    try:
-        result = await router.ensemble(prompt)
-        return StandardResponse(
-            request_id=request_id,
-            model=result.get("selected_model"),
-            latency_ms=None,
-            cost_estimate=None,
-            output=result.get("response"),
-            error=None
-        )
-    except Exception as e:
-        return StandardResponse(
-            request_id=request_id,
-            model=None,
-            latency_ms=None,
-            cost_estimate=None,
-            output=None,
-            error=str(e)
-        )
+@app.post("/test-all")
+async def test_all(req: Request):
+    return await router.test_all(req.prompt)
 
 @app.get("/metrics")
 def metrics():

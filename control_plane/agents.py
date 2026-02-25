@@ -19,7 +19,13 @@ class KimiAgent:
         if r.status_code != 200:
             raise Exception(f"Kimi Error {r.status_code}: {r.text}")
 
-        return r.json()["choices"][0]["message"]["content"]
+        data = r.json()
+        tokens = data.get("usage", {}).get("total_tokens", 0)
+
+        return {
+            "output": data["choices"][0]["message"]["content"],
+            "tokens": tokens
+        }
 
 
 class ClaudeAgent:
@@ -33,7 +39,6 @@ class ClaudeAgent:
             "Authorization": f"Bearer {KEY}",
             "anthropic-version": "2023-06-01"
         }
-
         body = {
             "model": self.model,
             "max_tokens": 1000,
@@ -46,7 +51,13 @@ class ClaudeAgent:
         if r.status_code != 200:
             raise Exception(f"Claude Error {r.status_code}: {r.text}")
 
-        return r.json()["content"][0]["text"]
+        data = r.json()
+        tokens = data.get("usage", {}).get("output_tokens", 0)
+
+        return {
+            "output": data["content"][0]["text"],
+            "tokens": tokens
+        }
 
 
 class AzureGPTAgent:
@@ -68,4 +79,10 @@ class AzureGPTAgent:
         if r.status_code != 200:
             raise Exception(f"AzureGPT Error {r.status_code}: {r.text}")
 
-        return r.json()["choices"][0]["message"]["content"]
+        data = r.json()
+        tokens = data.get("usage", {}).get("total_tokens", 0)
+
+        return {
+            "output": data["choices"][0]["message"]["content"],
+            "tokens": tokens
+        }

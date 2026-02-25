@@ -64,25 +64,27 @@ class Router:
             request_id, start = observability.start()
 
             if model == "kimi":
-                result = await self.kimi.run(prompt)
+                result_data = await self.kimi.run(prompt)
             elif model == "opus":
-                result = await self.opus.run(prompt)
+                result_data = await self.opus.run(prompt)
             elif model == "sonnet":
-                result = await self.sonnet.run(prompt)
+                result_data = await self.sonnet.run(prompt)
             elif model == "azure":
-                result = await self.azure.run(prompt)
+                result_data = await self.azure.run(prompt)
             else:
                 raise ValueError("Unknown model")
 
+            output = result_data["output"]
+            tokens = result_data["tokens"]
+
             latency = observability.record(model, start)
-            tokens = len(result.split())
             cost = estimate_cost(model, tokens)
 
             if cost > BUDGET_LIMIT:
                 raise Exception(f"Cost limit exceeded: {cost}")
 
             record_request(model, latency, tokens, cost)
-            set_cache(model, prompt, result)
+            set_cache(model, prompt, output)
 
             log_event({
                 "model": model,
@@ -96,7 +98,7 @@ class Router:
                 "latency_ms": latency,
                 "estimated_cost": cost,
                 "tokens": tokens,
-                "output": result,
+                "output": output,
                 "cache": False
             }
 
@@ -114,21 +116,18 @@ class Router:
                 try:
                     results[name] = await task
                 except Exception as e:
-                    results[name] = f"ERROR: {e}"
+                    results[name] = {"output": f"ERROR: {e}", "tokens": 0}
 
-            best_model, confidence = await self.judge.evaluate(prompt, results)
-
-            log_event({
-                "ensemble": True,
-                "selected_model": best_model,
-                "confidence": confidence
-            })
+            best_model, confidence = await self.judge.evaluate(
+                prompt,
+                {k: v["output"] for k, v in results.items()}
+            )
 
             return {
                 "selected_model": best_model,
                 "confidence": confidence,
-                "response": results.get(best_model),
-                "all_responses": results
+                "response": results.get(best_model, {}).get("output"),
+                "all_responses": {k: v["output"] for k, v in results.items()}
             }
 
     async def auto(self, prompt):

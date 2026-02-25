@@ -6,6 +6,7 @@ from .cost_model import estimate_cost
 from .database import record_request
 from .judge import Judge
 from .cache import get_cached, set_cache, init_cache
+from .adaptive import AdaptiveOptimizer
 from .logging import log_event
 
 BUDGET_LIMIT = 0.05
@@ -21,6 +22,7 @@ class Router:
         self.sonnet = ClaudeAgent("claude-sonnet-4-6")
         self.azure = AzureGPTAgent()
         self.judge = Judge()
+        self.adaptive = AdaptiveOptimizer()
         init_cache()
 
     def classify(self, prompt):
@@ -35,16 +37,16 @@ class Router:
         lower_prompt = prompt.lower()
 
         if any(word in lower_prompt for word in code_keywords):
-            return "opus"
+            return "deep_reasoning"
 
         length = len(prompt.split())
 
         if length > 120:
-            return "opus"
+            return "deep_reasoning"
         elif length < 15:
-            return "sonnet"
+            return "fast"
         else:
-            return "kimi"
+            return "balanced"
 
     async def single_route(self, model, prompt):
         async with semaphore:
@@ -130,5 +132,6 @@ class Router:
             }
 
     async def auto(self, prompt):
-        model = self.classify(prompt)
+        task_type = self.classify(prompt)
+        model = self.adaptive.select_optimal(task_type)
         return await self.single_route(model, prompt)

@@ -4,6 +4,8 @@ from .observability import observability
 from .cost_model import estimate_cost
 from .database import record_request
 
+BUDGET_LIMIT = 0.05  # simple per-request cost limit
+
 class Router:
 
     def __init__(self):
@@ -40,23 +42,32 @@ class Router:
 
         if model == "kimi":
             result = await self.kimi.run(prompt)
+            tokens = len(result.split())
         elif model == "opus":
             result = await self.opus.run(prompt)
+            tokens = len(result.split())
         elif model == "sonnet":
             result = await self.sonnet.run(prompt)
+            tokens = len(result.split())
         elif model == "azure":
             result = await self.azure.run(prompt)
+            tokens = len(result.split())
         else:
             raise ValueError("Unknown model")
 
         latency = observability.record(model, start)
-        record_request(model, latency)
-        cost = estimate_cost(model, len(result.split()))
+        cost = estimate_cost(model, tokens)
+
+        if cost > BUDGET_LIMIT:
+            raise Exception(f"Cost limit exceeded: {cost}")
+
+        record_request(model, latency, tokens, cost)
 
         return {
             "model": model,
             "latency_ms": latency,
             "estimated_cost": cost,
+            "tokens": tokens,
             "output": result
         }
 

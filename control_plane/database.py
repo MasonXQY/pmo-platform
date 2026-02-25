@@ -12,6 +12,8 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             model TEXT,
             latency_ms REAL,
+            tokens INTEGER,
+            cost REAL,
             timestamp REAL
         )
     """)
@@ -19,12 +21,12 @@ def init_db():
     conn.close()
 
 
-def record_request(model, latency_ms):
+def record_request(model, latency_ms, tokens, cost):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO requests (model, latency_ms, timestamp) VALUES (?, ?, ?)",
-        (model, latency_ms, time.time())
+        "INSERT INTO requests (model, latency_ms, tokens, cost, timestamp) VALUES (?, ?, ?, ?, ?)",
+        (model, latency_ms, tokens, cost, time.time())
     )
     conn.commit()
     conn.close()
@@ -36,7 +38,9 @@ def get_metrics():
     cursor.execute("""
         SELECT model,
                COUNT(*) as calls,
-               AVG(latency_ms) as avg_latency
+               AVG(latency_ms) as avg_latency,
+               SUM(tokens) as total_tokens,
+               SUM(cost) as total_cost
         FROM requests
         GROUP BY model
     """)
@@ -46,7 +50,9 @@ def get_metrics():
     return {
         row[0]: {
             "calls": row[1],
-            "avg_latency_ms": round(row[2], 2)
+            "avg_latency_ms": round(row[2], 2) if row[2] else 0,
+            "total_tokens": row[3] or 0,
+            "total_cost": round(row[4], 6) if row[4] else 0
         }
         for row in rows
     }

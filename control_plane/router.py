@@ -8,6 +8,7 @@ from .judge import Judge
 from .cache import get_cached, set_cache, init_cache
 from .adaptive import AdaptiveOptimizer
 from .logging import log_event
+from .circuit_breaker import breaker
 
 BUDGET_LIMIT = 0.05
 CONCURRENCY_LIMIT = 10
@@ -48,6 +49,29 @@ class Router:
         else:
             return "balanced"
 
+    async def _call_model(self, model, prompt):
+        if breaker.is_open(model):
+            raise Exception(f"Circuit open for {model}")
+
+        try:
+            if model == "kimi":
+                result_data = await self.kimi.run(prompt)
+            elif model == "opus":
+                result_data = await self.opus.run(prompt)
+            elif model == "sonnet":
+                result_data = await self.sonnet.run(prompt)
+            elif model == "azure":
+                result_data = await self.azure.run(prompt)
+            else:
+                raise ValueError("Unknown model")
+
+            breaker.record_success(model)
+            return result_data
+
+        except Exception as e:
+            breaker.record_failure(model)
+            raise e
+
     async def single_route(self, model, prompt):
         async with semaphore:
             cached = get_cached(model, prompt)
@@ -63,16 +87,7 @@ class Router:
 
             request_id, start = observability.start()
 
-            if model == "kimi":
-                result_data = await self.kimi.run(prompt)
-            elif model == "opus":
-                result_data = await self.opus.run(prompt)
-            elif model == "sonnet":
-                result_data = await self.sonnet.run(prompt)
-            elif model == "azure":
-                result_data = await self.azure.run(prompt)
-            else:
-                raise ValueError("Unknown model")
+            result_data = await self._call_model(model, prompt)
 
             output = result_data["output"]
             tokens = result_data["tokens"]
@@ -105,29 +120,33 @@ class Router:
     async def ensemble(self, prompt):
         async with semaphore:
             tasks = {
-                "kimi": asyncio.create_task(self.kimi.run(prompt)),
-                "opus": asyncio.create_task(self.opus.run(prompt)),
-                "sonnet": asyncio.create_task(self.sonnet.run(prompt)),
-                "azure": asyncio.create_task(self.azure.run(prompt))
+                "kimi": asyncio.create_task(self._call_model("kimi", prompt)),
+                "opus": asyncio.create_task(self._call_model("opus", prompt)),
+                "sonnet": asyncio.create_task(self._call_model("sonnet", prompt)),
+                "azure": asyncio.create_task(self._call_model("azure", prompt))
             }
 
             results = {}
             for name, task in tasks.items():
                 try:
-                    results[name] = await task
+                    data = await task
+                    results[name] = data["output"]
                 except Exception as e:
-                    results[name] = {"output": f"ERROR: {e}", "tokens": 0}
+                    results[name] = f"ERROR: {e}"
 
-            best_model, confidence = await self.judge.evaluate(
-                prompt,
-                {k: v["output"] for k, v in results.items()}
-            )
+            best_model, confidence = await self.judge.evaluate(prompt, results)
+
+            log_event({
+                "ensemble": True,
+                "selected_model": best_model,
+                "confidence": confidence
+            })
 
             return {
                 "selected_model": best_model,
                 "confidence": confidence,
-                "response": results.get(best_model, {}).get("output"),
-                "all_responses": {k: v["output"] for k, v in results.items()}
+                "response": results.get(best_model),
+                "all_responses": results
             }
 
     async def auto(self, prompt):

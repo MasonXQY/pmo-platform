@@ -1,50 +1,43 @@
-import sqlite3
-
-DB_PATH = "control_plane_metrics.db"
+from .database import get_metrics
+from .performance import model_win_rates
 
 class AdaptiveOptimizer:
 
     def get_model_stats(self):
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT model,
-                   COUNT(*) as calls,
-                   AVG(latency_ms) as avg_latency,
-                   SUM(cost) as total_cost
-            FROM requests
-            GROUP BY model
-        """)
-        rows = cursor.fetchall()
-        conn.close()
+        return get_metrics()
 
-        stats = {}
-        for row in rows:
-            stats[row[0]] = {
-                "calls": row[1],
-                "avg_latency": row[2] or 0,
-                "total_cost": row[3] or 0
-            }
-        return stats
+    def get_win_rates(self):
+        return model_win_rates()
 
     def select_optimal(self, prompt_type="balanced"):
-        stats = self.get_model_stats()
+        metrics = self.get_model_stats()
+        wins = self.get_win_rates()
 
-        if not stats:
+        # Fallback default
+        if not metrics:
             return "kimi"
 
-        # Simple adaptive logic:
-        # Prefer lowest latency for fast tasks
-        # Prefer lowest cost for balanced tasks
-        # Prefer opus for deep reasoning
-
+        # Deep reasoning always prefer opus
         if prompt_type == "deep_reasoning":
             return "opus"
 
+        # Fast tasks → lowest latency
         if prompt_type == "fast":
-            return min(stats, key=lambda m: stats[m]["avg_latency"])
+            return min(metrics, key=lambda m: metrics[m].get("avg_latency_ms", 9999))
 
-        if prompt_type == "balanced":
-            return min(stats, key=lambda m: stats[m]["total_cost"])
+        # Balanced → weighted decision: win_rate prioritized, then cost
+        best_model = None
+        best_score = -1
 
-        return "kimi"
+        for model, data in metrics.items():
+            win_rate = wins.get(model, {}).get("win_rate", 0)
+            cost = data.get("total_cost", 0)
+
+            # Score formula: prioritize win rate, penalize high cost
+            score = (win_rate * 2) - (cost * 0.1)
+
+            if score > best_score:
+                best_score = score
+                best_model = model
+
+        return best_model or "kimi"

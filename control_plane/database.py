@@ -11,6 +11,7 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant TEXT,
             model TEXT,
             latency_ms REAL,
             tokens INTEGER,
@@ -24,12 +25,13 @@ def init_db():
     conn.close()
 
 
-def record_request(model, latency_ms, tokens, cost, error=False):
+def record_request(tenant, model, latency_ms, tokens, cost, error=False):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO requests (model, latency_ms, tokens, cost, error, timestamp, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO requests (tenant, model, latency_ms, tokens, cost, error, timestamp, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
+            tenant,
             model,
             latency_ms,
             tokens,
@@ -43,20 +45,33 @@ def record_request(model, latency_ms, tokens, cost, error=False):
     conn.close()
 
 
-def get_metrics():
+def get_metrics(tenant=None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT model,
-               COUNT(*) as calls,
-               AVG(latency_ms) as avg_latency,
-               SUM(tokens) as total_tokens,
-               SUM(cost) as total_cost,
-               SUM(error) as total_errors
-        FROM requests
-        GROUP BY model
-    """)
+    if tenant:
+        cursor.execute("""
+            SELECT model,
+                   COUNT(*) as calls,
+                   AVG(latency_ms) as avg_latency,
+                   SUM(tokens) as total_tokens,
+                   SUM(cost) as total_cost,
+                   SUM(error) as total_errors
+            FROM requests
+            WHERE tenant = ?
+            GROUP BY model
+        """, (tenant,))
+    else:
+        cursor.execute("""
+            SELECT model,
+                   COUNT(*) as calls,
+                   AVG(latency_ms) as avg_latency,
+                   SUM(tokens) as total_tokens,
+                   SUM(cost) as total_cost,
+                   SUM(error) as total_errors
+            FROM requests
+            GROUP BY model
+        """)
 
     rows = cursor.fetchall()
     conn.close()
@@ -73,17 +88,24 @@ def get_metrics():
     }
 
 
-def get_daily_cost():
+def get_daily_cost(tenant=None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     today = datetime.utcnow().date().isoformat()
 
-    cursor.execute("""
-        SELECT SUM(cost)
-        FROM requests
-        WHERE date = ?
-    """, (today,))
+    if tenant:
+        cursor.execute("""
+            SELECT SUM(cost)
+            FROM requests
+            WHERE date = ? AND tenant = ?
+        """, (today, tenant))
+    else:
+        cursor.execute("""
+            SELECT SUM(cost)
+            FROM requests
+            WHERE date = ?
+        """, (today,))
 
     row = cursor.fetchone()
     conn.close()

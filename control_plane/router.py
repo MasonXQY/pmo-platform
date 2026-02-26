@@ -9,7 +9,8 @@ from .cache import get_cached, set_cache, init_cache
 from .adaptive import AdaptiveOptimizer
 from .logging import log_event, hash_prompt
 from .circuit_breaker import breaker
-from .auth import authorize
+from .model_registry import is_enabled
+from .performance import record_ensemble_result
 
 BUDGET_LIMIT = 0.05
 CONCURRENCY_LIMIT = 10
@@ -27,58 +28,39 @@ class Router:
         self.adaptive = AdaptiveOptimizer()
         init_cache()
 
-    async def single_route(self, tenant, model, prompt):
+    async def ensemble(self, prompt):
         async with semaphore:
-            if breaker.is_open(model):
-                raise Exception(f"Circuit open for {model}")
+            prompt_hash = hash_prompt(prompt)
 
-            cached = get_cached(model, prompt)
-            if cached:
-                return {
-                    "tenant": tenant,
-                    "model": model,
-                    "latency_ms": 0,
-                    "estimated_cost": 0,
-                    "tokens": len(cached.split()),
-                    "output": cached,
-                    "cache": True
-                }
+            tasks = {
+                "kimi": asyncio.create_task(self._call_model("kimi", prompt)),
+                "opus": asyncio.create_task(self._call_model("opus", prompt)),
+                "sonnet": asyncio.create_task(self._call_model("sonnet", prompt)),
+                "azure": asyncio.create_task(self._call_model("azure", prompt))
+            }
 
-            request_id, start = observability.start()
+            results = {}
+            for name, task in tasks.items():
+                try:
+                    data = await task
+                    results[name] = data["output"]
+                except Exception as e:
+                    results[name] = f"ERROR: {e}"
 
-            if model == "kimi":
-                result_data = await self.kimi.run(prompt)
-            elif model == "opus":
-                result_data = await self.opus.run(prompt)
-            elif model == "sonnet":
-                result_data = await self.sonnet.run(prompt)
-            elif model == "azure":
-                result_data = await self.azure.run(prompt)
-            else:
-                raise ValueError("Unknown model")
+            best_model, confidence = await self.judge.evaluate(prompt, results)
 
-            output = result_data["output"]
-            tokens = result_data["tokens"]
-
-            latency = observability.record(model, start)
-            cost = estimate_cost(model, tokens)
-
-            record_request(tenant, model, latency, tokens, cost)
+            record_ensemble_result("default", best_model, confidence)
 
             log_event({
-                "tenant": tenant,
-                "model": model,
-                "latency_ms": latency,
-                "tokens": tokens,
-                "cost": cost
+                "event": "ensemble_decision",
+                "selected_model": best_model,
+                "confidence": confidence,
+                "prompt_hash": prompt_hash
             })
 
             return {
-                "tenant": tenant,
-                "model": model,
-                "latency_ms": latency,
-                "estimated_cost": cost,
-                "tokens": tokens,
-                "output": output,
-                "cache": False
+                "selected_model": best_model,
+                "confidence": confidence,
+                "response": results.get(best_model),
+                "all_responses": results
             }

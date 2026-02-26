@@ -8,6 +8,7 @@ from .sla import sla_controller
 from .health_score import HealthScore
 from .circuit_breaker import breaker
 from .model_registry import enable_model, disable_model, registry_status
+from .performance import model_win_rates
 
 app = FastAPI()
 router = Router()
@@ -65,6 +66,11 @@ def cost_trend(x_api_key: str = Header(...)):
         "daily_cost": get_daily_cost(),
         "metrics": get_metrics()
     }
+
+@app.get("/leaderboard")
+def leaderboard(x_api_key: str = Header(...)):
+    authorize(x_api_key, "azure")
+    return model_win_rates()
 
 @app.get("/admin/models")
 def list_models(x_api_key: str = Header(...)):

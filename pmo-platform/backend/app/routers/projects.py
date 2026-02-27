@@ -24,9 +24,31 @@ def create_project(project: ProjectCreate, db: Session = Depends(get_db), tenant
 def list_projects(db: Session = Depends(get_db), tenant_id: UUID = Depends(get_static_tenant)):
     return db.query(Project).filter(Project.tenant_id == tenant_id).all()
 
-@router.get("/{project_id}/predict")
-def predict_project(project_id: UUID, db: Session = Depends(get_db), tenant_id: UUID = Depends(get_static_tenant)):
+@router.post("/{project_id}/predict-async")
+def predict_project_async(project_id: UUID, db: Session = Depends(get_db), tenant_id: UUID = Depends(get_static_tenant)):
+    from app.models.job import PredictionJob
+    from app.services.job_service import create_job
+    from app.queue.tasks import run_prediction_job
+
     project = db.query(Project).filter(Project.id == project_id, Project.tenant_id == tenant_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    return generate_executive_summary(project)
+
+    job = create_job(db, tenant_id, project_id)
+    run_prediction_job.delay(str(job.id))
+
+    return {"job_id": str(job.id), "status": job.status}
+
+@router.get("/jobs/{job_id}")
+def get_job_status(job_id: UUID, db: Session = Depends(get_db), tenant_id: UUID = Depends(get_static_tenant)):
+    from app.models.job import PredictionJob
+
+    job = db.query(PredictionJob).filter(PredictionJob.id == job_id, PredictionJob.tenant_id == tenant_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    return {
+        "status": job.status,
+        "result": job.result,
+        "execution_duration_ms": job.execution_duration_ms
+    }
